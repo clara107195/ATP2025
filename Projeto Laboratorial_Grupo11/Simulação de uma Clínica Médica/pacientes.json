@@ -26081,6 +26081,20 @@
                 "atividade_fisica": "alta",
                 "cronico": true
             }
+        },
+        {
+            "id": "d2001",
+            "nome": "Clara Martins",
+            "idade": 20,
+            "sexo": "feminino",
+            "doenca": "Dor de garganta",
+            "prioridade": "Emergência",
+            "atributos": {
+                "fumador": false,
+                "consome_alcool": false,
+                "atividade_fisica": "baixa",
+                "cronico": false
+            }
         }
     ]
 }

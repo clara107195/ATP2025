@@ -320,19 +320,34 @@ def listar_medicos():
     def build_med_rows(filter_name=''):
         rows = []
         nf = _normalize_text(filter_name)
-        for m in medicos:
+        i = 0
+        while i < len(medicos):
+            m = medicos[i]
             nome = m.get('nome', '')
             if nf and nf not in _normalize_text(nome):
+                i = i + 1
                 continue
             ocupado = m.get('ocupado', False)
             status = 'Ocupado' if ocupado else 'Disponível'
             doente = m.get('doente_corrente', '')
             if ocupado and doente:
-                status += f' (atendendo {doente})'
+                status = status + f' (atendendo {doente})'
             rows.append([m.get('id', ''), nome, m.get('especialidade', ''), status])
+            i = i + 1
         return rows
 
-    estatisticas = lambda: f"Total: {len(medicos)}  |  Disponíveis: {sum(1 for m in medicos if not m.get('ocupado', False))}  |  Ocupados: {sum(1 for m in medicos if m.get('ocupado', False))}"
+    def calcular_estatisticas():
+        total = len(medicos)
+        disponiveis = 0
+        ocupados = 0
+        j = 0
+        while j < len(medicos):
+            if not medicos[j].get('ocupado', False):
+                disponiveis = disponiveis + 1
+            else:
+                ocupados = ocupados + 1
+            j = j + 1
+        return f"Total: {total}  |  Disponíveis: {disponiveis}  |  Ocupados: {ocupados}"
 
     left_col = sg.Column([
         [sg.Input('', key='-SEARCH-MED-', size=(25,1), tooltip='Pesquisar por nome'),
@@ -353,7 +368,7 @@ def listar_medicos():
                       background_color='white', text_color=escuro, font=('Courier', 10))],
         [sg.Button('Editar', key='-EDITAR-MED-', button_color=(claro, escuro), size=(12,1), visible=False),
          sg.Button('Remover', key='-REMOVER-MED-', button_color=(claro, escuro), size=(12,1), visible=False)],
-        [sg.Text(estatisticas(), key='-ESTAT-', background_color='white', text_color=escuro, pad=(0,10))]
+        [sg.Text(calcular_estatisticas(), key='-ESTAT-', background_color='white', text_color=escuro, pad=(0,10))]
     ], background_color='white', pad=(6,6))
 
     layout = [
@@ -380,7 +395,7 @@ def listar_medicos():
             w['-DETALHES-'].update('')
             w['-EDITAR-MED-'].update(visible=False)
             w['-REMOVER-MED-'].update(visible=False)
-            w['-ESTAT-'].update(estatisticas())
+            w['-ESTAT-'].update(calcular_estatisticas())
             medico_selecionado = None
 
         if event == '-CLEAR-MED-':
@@ -389,7 +404,7 @@ def listar_medicos():
             w['-DETALHES-'].update('')
             w['-EDITAR-MED-'].update(visible=False)
             w['-REMOVER-MED-'].update(visible=False)
-            w['-ESTAT-'].update(estatisticas())
+            w['-ESTAT-'].update(calcular_estatisticas())
             medico_selecionado = None
 
         if event == '-TABLE-MEDICOS-':
@@ -401,7 +416,15 @@ def listar_medicos():
                 if idx < len(filtered):
                     row = filtered[idx]
                     med_id = row[0]
-                    m = next((x for x in medicos if str(x.get('id','')) == str(med_id)), None)
+                    
+                    # Procurar médico sem next/generator (loop while)
+                    m = None
+                    k = 0
+                    while k < len(medicos):
+                        if str(medicos[k].get('id','')) == str(med_id):
+                            m = medicos[k]
+                        k = k + 1
+                    
                     if m:
                         medico_selecionado = m
                         linhas = [
@@ -415,7 +438,7 @@ def listar_medicos():
                         w['-DETALHES-'].update('\n'.join(linhas))
                         w['-EDITAR-MED-'].update(visible=True)
                         w['-REMOVER-MED-'].update(visible=True)
-                        w['-ESTAT-'].update(estatisticas())
+                        w['-ESTAT-'].update(calcular_estatisticas())
 
         if event == '-EDITAR-MED-' and medico_selecionado:
           
@@ -447,12 +470,13 @@ def listar_medicos():
             
             window_edit = sg.Window('Editar Médico', layout_edit, modal=True, background_color=claro)
             
-            while True:
+            editando = True
+            while editando:
                 event_edit, values_edit = window_edit.read()
                 
                 if event_edit in (sg.WIN_CLOSED, '-CANCELAR-'):
                     window_edit.close()
-                    break
+                    editando = False
                 
                 if event_edit == '-SALVAR-':
                     if not values_edit['-NOME-'].strip() or not values_edit['-ESPECIALIDADE-'].strip():
@@ -470,6 +494,7 @@ def listar_medicos():
                         popup_ok('Médico editado com sucesso!', title='Sucesso', 
                                 background_color=claro, text_color=escuro)
                         window_edit.close()
+                        editando = False
                         
                         
                         dados = carregar_dados('medicos.json')
@@ -481,9 +506,8 @@ def listar_medicos():
                         w['-DETALHES-'].update('')
                         w['-EDITAR-MED-'].update(visible=False)
                         w['-REMOVER-MED-'].update(visible=False)
-                        w['-ESTAT-'].update(estatisticas())
+                        w['-ESTAT-'].update(calcular_estatisticas())
                         medico_selecionado = None
-                        break
 
         if event == '-REMOVER-MED-' and medico_selecionado:
             confirma = popup_sim_nao(
@@ -506,10 +530,8 @@ def listar_medicos():
                     w['-DETALHES-'].update('')
                     w['-EDITAR-MED-'].update(visible=False)
                     w['-REMOVER-MED-'].update(visible=False)
-                    w['-ESTAT-'].update(estatisticas())
+                    w['-ESTAT-'].update(calcular_estatisticas())
                     medico_selecionado = None
-
-
 def listar_pacientes():
     _, tem_pacientes = verificar_dados_importados()
     if not tem_pacientes:
@@ -532,44 +554,55 @@ def listar_pacientes():
     def build_pac_rows(filter_value='', filter_type='Nome'):
         rows = []
         nf = _normalize_text(filter_value)
-
-        for p in pacientes:
+        
+        i = 0
+        while i < len(pacientes):
+            p = pacientes[i]
             match = True
 
             if nf:
                 if filter_type == 'Nome':
                     match = nf in _normalize_text(p.get('nome', ''))
-
                 elif filter_type == 'Prioridade':
                     prioridade = _normalize_text(p.get('prioridade', ''))
-
                     if nf in ('urgente', 'emergencia', 'emergência'):
                         match = prioridade in ('emergencia', 'emergência')
                     else:
                         match = nf == prioridade
-
-
                 elif filter_type == 'Doença':
                     match = nf in _normalize_text(p.get('doenca', ''))
 
-            if not match:
-                continue
-
-            prioridade = prioridade_label(p.get('prioridade', 'normal'))
-
-            rows.append([
-                p.get('id',''),
-                p.get('nome',''),
-                str(p.get('idade','')),
-                p.get('sexo','').capitalize(),
-                prioridade,
-                p.get('doenca','')
-            ])
-
+            if match:
+                prioridade = prioridade_label(p.get('prioridade', 'normal'))
+                rows.append([
+                    p.get('id',''),
+                    p.get('nome',''),
+                    str(p.get('idade','')),
+                    p.get('sexo','').capitalize(),
+                    prioridade,
+                    p.get('doenca','')
+                ])
+            i = i + 1
         return rows
 
-
-    estatisticas = lambda: f"Total: {len(pacientes)}  |  Emergência: {sum(1 for p in pacientes if _normalize_text(p.get('prioridade','')) in ('emergencia','emergência'))}  |  Alta: {sum(1 for p in pacientes if _normalize_text(p.get('prioridade','')) == 'alta')}  |  Normal: {sum(1 for p in pacientes if _normalize_text(p.get('prioridade','')) == 'normal')}"
+    def calcular_estatisticas():
+        total = len(pacientes)
+        emergencia = 0
+        alta = 0
+        normal = 0
+        
+        j = 0
+        while j < len(pacientes):
+            prioridade = _normalize_text(pacientes[j].get('prioridade',''))
+            if prioridade in ('emergencia', 'emergência'):
+                emergencia = emergencia + 1
+            elif prioridade == 'alta':
+                alta = alta + 1
+            else:
+                normal = normal + 1
+            j = j + 1
+        
+        return f"Total: {total}  |  Emergência: {emergencia}  |  Alta: {alta}  |  Normal: {normal}"
 
     left_col = sg.Column([
         [
@@ -599,7 +632,7 @@ def listar_pacientes():
                       background_color='white', text_color=escuro, font=('Courier', 10))],
         [sg.Button('Editar', key='-EDITAR-PAC-', button_color=(claro, escuro), size=(12,1), visible=False),
          sg.Button('Remover', key='-REMOVER-PAC-', button_color=(claro, escuro), size=(12,1), visible=False)],
-        [sg.Text(estatisticas(), key='-ESTAT-PAC-', background_color='white', text_color=escuro, pad=(0,10), size=(55,2))]
+        [sg.Text(calcular_estatisticas(), key='-ESTAT-PAC-', background_color='white', text_color=escuro, pad=(0,10), size=(55,2))]
     ], background_color='white', pad=(6,6))
 
     layout = [
@@ -631,9 +664,8 @@ def listar_pacientes():
             w['-DETALHES-PAC-'].update('')
             w['-EDITAR-PAC-'].update(visible=False)
             w['-REMOVER-PAC-'].update(visible=False)
-            w['-ESTAT-PAC-'].update(estatisticas())
+            w['-ESTAT-PAC-'].update(calcular_estatisticas())
             paciente_selecionado = None
-
 
         if event == '-CLEAR-PAC-':
             w['-SEARCH-PAC-'].update('')
@@ -646,9 +678,8 @@ def listar_pacientes():
             w['-DETALHES-PAC-'].update('')
             w['-EDITAR-PAC-'].update(visible=False)
             w['-REMOVER-PAC-'].update(visible=False)
-            w['-ESTAT-PAC-'].update(estatisticas())
+            w['-ESTAT-PAC-'].update(calcular_estatisticas())
             paciente_selecionado = None
-
 
         if event == '-TABLE-PACIENTES-':
             sel = values.get('-TABLE-PACIENTES-')
@@ -662,14 +693,25 @@ def listar_pacientes():
                 if idx < len(filtered):
                     row = filtered[idx]
                     pac_id = row[0]
-                    p = next((x for x in pacientes if str(x.get('id','')) == str(pac_id)), None)
+                    
+                    # Procurar paciente sem next/generator (loop while)
+                    p = None
+                    k = 0
+                    while k < len(pacientes):
+                        if str(pacientes[k].get('id','')) == str(pac_id):
+                            p = pacientes[k]
+                        k = k + 1
+                    
                     if p:
                         paciente_selecionado = p
                         atributos = p.get('atributos', {})
                         atr_list = []
-                        if atributos.get('fumador'): atr_list.append('Fumador')
-                        if atributos.get('consome_alcool'): atr_list.append('Consome Álcool')
-                        if atributos.get('cronico'): atr_list.append('Doença Crónica')
+                        if atributos.get('fumador'):
+                            atr_list.append('Fumador')
+                        if atributos.get('consome_alcool'):
+                            atr_list.append('Consome Álcool')
+                        if atributos.get('cronico'):
+                            atr_list.append('Doença Crónica')
                         atr_list.append(f"Ativ. Física: {atributos.get('atividade_fisica','N/A').capitalize()}")
                         linhas = [
                             f"ID: {p.get('id','')}",
@@ -685,7 +727,7 @@ def listar_pacientes():
                         w['-DETALHES-PAC-'].update('\n'.join(linhas))
                         w['-EDITAR-PAC-'].update(visible=True)
                         w['-REMOVER-PAC-'].update(visible=True)
-                        w['-ESTAT-PAC-'].update(estatisticas())
+                        w['-ESTAT-PAC-'].update(calcular_estatisticas())
 
         if event == '-EDITAR-PAC-' and paciente_selecionado:
             
@@ -721,48 +763,46 @@ def listar_pacientes():
             
             window_edit = sg.Window('Editar Paciente', layout_edit, modal=True, background_color=claro)
             
-            while True:
+            editando = True
+            while editando:
                 event_edit, values_edit = window_edit.read()
                 
                 if event_edit in (sg.WIN_CLOSED, '-CANCELAR-'):
                     window_edit.close()
-                    break
+                    editando = False
                 
                 if event_edit == '-SALVAR-':
                     idade, valido = validar_idade(values_edit['-IDADE-'])
                     if not valido:
                         popup_ok('Idade deve ser um número!', title='Erro', 
                                 background_color=claro, text_color=escuro)
-                        continue
                     
-                    if not values_edit['-NOME-'].strip():
+                    elif not values_edit['-NOME-'].strip():
                         popup_ok('Por favor, preencha o nome!', title='Erro', 
                                 background_color=claro, text_color=escuro)
-                        continue
                     
-                    atualizar_paciente(
-                        paciente_selecionado, values_edit['-NOME-'], idade, values_edit['-SEXO-'],
-                        values_edit['-DOENCA-'], values_edit['-PRIORIDADE-'], values_edit['-FUMADOR-'],
-                        values_edit['-ALCOOL-'], values_edit['-ATIVIDADE-'], values_edit['-CRONICO-']
-                    )
-                    salvar_dados('pacientes.json', dados)
-                    popup_ok('Paciente editado com sucesso!', title='Sucesso', 
-                            background_color=claro, text_color=escuro)
-                    window_edit.close()
-                    
-                   
-                    dados = carregar_dados('pacientes.json')
-                    pacientes = dados.get('pacientes', [])
-                    
-                    
-                    filtro_atual = values.get('-SEARCH-PAC-', '')
-                    w['-TABLE-PACIENTES-'].update(values=build_pac_rows(filtro_atual))
-                    w['-DETALHES-PAC-'].update('')
-                    w['-EDITAR-PAC-'].update(visible=False)
-                    w['-REMOVER-PAC-'].update(visible=False)
-                    w['-ESTAT-PAC-'].update(estatisticas())
-                    paciente_selecionado = None
-                    break
+                    else:
+                        atualizar_paciente(
+                            paciente_selecionado, values_edit['-NOME-'], idade, values_edit['-SEXO-'],
+                            values_edit['-DOENCA-'], values_edit['-PRIORIDADE-'], values_edit['-FUMADOR-'],
+                            values_edit['-ALCOOL-'], values_edit['-ATIVIDADE-'], values_edit['-CRONICO-']
+                        )
+                        salvar_dados('pacientes.json', dados)
+                        popup_ok('Paciente editado com sucesso!', title='Sucesso', 
+                                background_color=claro, text_color=escuro)
+                        window_edit.close()
+                        editando = False
+                        
+                        dados = carregar_dados('pacientes.json')
+                        pacientes = dados.get('pacientes', [])
+                        
+                        filtro_atual = values.get('-SEARCH-PAC-', '')
+                        w['-TABLE-PACIENTES-'].update(values=build_pac_rows(filtro_atual))
+                        w['-DETALHES-PAC-'].update('')
+                        w['-EDITAR-PAC-'].update(visible=False)
+                        w['-REMOVER-PAC-'].update(visible=False)
+                        w['-ESTAT-PAC-'].update(calcular_estatisticas())
+                        paciente_selecionado = None
 
         if event == '-REMOVER-PAC-' and paciente_selecionado:
             confirma = popup_sim_nao(
@@ -775,20 +815,16 @@ def listar_pacientes():
                     popup_ok('Paciente removido com sucesso!', title='Sucesso', 
                             background_color=claro, text_color=escuro)
                     
-                    # Recarregar dados atualizados
                     dados = carregar_dados('pacientes.json')
                     pacientes = dados.get('pacientes', [])
                     
-                    # Manter filtro de pesquisa atual
                     filtro_atual = values.get('-SEARCH-PAC-', '')
                     w['-TABLE-PACIENTES-'].update(values=build_pac_rows(filtro_atual))
                     w['-DETALHES-PAC-'].update('')
                     w['-EDITAR-PAC-'].update(visible=False)
                     w['-REMOVER-PAC-'].update(visible=False)
-                    w['-ESTAT-PAC-'].update(estatisticas())
+                    w['-ESTAT-PAC-'].update(calcular_estatisticas())
                     paciente_selecionado = None
-
-
 
 
 

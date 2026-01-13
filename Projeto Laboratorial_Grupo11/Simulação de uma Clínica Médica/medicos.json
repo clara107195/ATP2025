@@ -314,6 +314,15 @@
             "especialidade": "Pediatria",
             "total_tempo_ocupado": 0.0,
             "inicio_ultima_consulta": 0.0
+        },
+        {
+            "id": "m36",
+            "nome": "Dra. Clarice",
+            "ocupado": false,
+            "doente_corrente": null,
+            "especialidade": "Cardiologia",
+            "total_tempo_ocupado": 0.0,
+            "inicio_ultima_consulta": 0.0
         }
     ],
     "mapeamento_doencas": {

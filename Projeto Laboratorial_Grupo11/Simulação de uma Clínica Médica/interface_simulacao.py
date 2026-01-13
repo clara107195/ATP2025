@@ -1892,11 +1892,12 @@ def processar_desistencias():
     
     while not queue_empty(fila_temporaria):
         paciente, fila_temporaria = remover_da_fila(fila_temporaria)
-        tempo_espera = tempo_atual - paciente["tempo_chegada"]
+        tempo_espera = tempo_atual - paciente.get("tempo_chegada", tempo_atual)
 
         if tempo_espera > tempo_max_espera:
             if random.random() < prob_desistencia:
                 paciente["tempo_espera"] = tempo_espera
+                paciente["motivo_desistencia"] = f"Esperou {tempo_espera:.1f} min (> {tempo_max_espera} min)"
                 estado_simulacao["pacientes_desistentes"].append(paciente)
             else:
                 fila_nova = adicionar_a_fila(fila_nova, paciente)
@@ -1904,45 +1905,26 @@ def processar_desistencias():
             fila_nova = adicionar_a_fila(fila_nova, paciente)
     
     estado_simulacao["fila_espera"] = fila_nova
-
+    estado_simulacao["fila_espera"] = ordenar_fila_por_prioridade(
+        estado_simulacao["fila_espera"], PRIORIDADES
+    )
 def atualizar_simulacao(incremento_tempo):
     if not estado_simulacao["simulacao_ativa"]:
         return
     
     estado_simulacao["tempo_atual"] = estado_simulacao["tempo_atual"] + incremento_tempo
     tempo_atual = estado_simulacao["tempo_atual"]
-    
 
     if len(estado_simulacao["dados_historicos"]) == 0 or tempo_atual - estado_simulacao["dados_historicos"][-1]["tempo"] >= 1.0:
         coletar_dados_historicos()
-    
 
     if tempo_atual >= estado_simulacao["tempo_simulacao"]:
         estado_simulacao["simulacao_ativa"] = False
         salvar_resultado_simulacao()
         return
     
-
-    tamanho_fila_atual = tamanho_fila(estado_simulacao["fila_espera"])
-    num_medicos = len(estado_simulacao["medicos"])
-    lambda_original = estado_simulacao.get("lambda_original", estado_simulacao["lambda_chegada"])
-    if tamanho_fila_atual > num_medicos * 8:  
-
-        estado_simulacao["lambda_chegada"] = lambda_original * 0.3
-    elif tamanho_fila_atual > num_medicos * 5:  
-
-        estado_simulacao["lambda_chegada"] = lambda_original * 0.6
-    elif tamanho_fila_atual > num_medicos * 3:  
-        
-        estado_simulacao["lambda_chegada"] = lambda_original * 0.8
-    else:
-       
-        estado_simulacao["lambda_chegada"] = lambda_original
-
     medicos = estado_simulacao["medicos"]
     num_medicos_total = len(medicos)
-    
-
     max_pausa_simultanea = min(
         estado_simulacao.get("max_pausa_simultanea", MAX_MEDICOS_PAUSA_SIMULTANEA),
         max(1, num_medicos_total // 3)
@@ -1956,16 +1938,18 @@ def atualizar_simulacao(incremento_tempo):
         i = i + 1
 
     pausas_permitidas = max_pausa_simultanea
+    tamanho_fila_atual = tamanho_fila(estado_simulacao["fila_espera"])
+    num_medicos = len(medicos)
+    
     if tamanho_fila_atual > num_medicos * 6:
-        pausas_permitidas = max(0, max_pausa_simultanea // 2)  
+        pausas_permitidas = max(0, max_pausa_simultanea // 2)
     elif tamanho_fila_atual > num_medicos * 4:
-        pausas_permitidas = max(1, max_pausa_simultanea * 2 // 3)  
-
+        pausas_permitidas = max(1, max_pausa_simultanea * 2 // 3)
+    
     medicos_disponiveis_pausa = []
     i = 0
     while i < len(medicos):
         medico = medicos[i]
-
         pode_pausar = (
             not medico["em_pausa"] and 
             medico["num_pausas_realizadas"] < medico["num_pausas"] and
@@ -1973,15 +1957,15 @@ def atualizar_simulacao(incremento_tempo):
         )
         
         if pode_pausar:
-
             especialidade = medico["especialidade"]
+            
             medicos_mesma_especialidade = []
             j = 0
             while j < len(medicos):
                 if medicos[j]["especialidade"] == especialidade:
                     medicos_mesma_especialidade.append(medicos[j])
                 j = j + 1
-
+            
             medicos_trabalhando_mesma_espec = 0
             j = 0
             while j < len(medicos_mesma_especialidade):
@@ -1990,26 +1974,21 @@ def atualizar_simulacao(incremento_tempo):
                 j = j + 1
             
             if len(medicos_mesma_especialidade) == 1:
-                
                 if tamanho_fila_atual < 3:
                     medicos_disponiveis_pausa.append(medico)
             elif medicos_trabalhando_mesma_espec > 0:
-                
                 medicos_disponiveis_pausa.append(medico)
         
         i = i + 1
-
+    
     if medicos_disponiveis_pausa and medicos_em_pausa < pausas_permitidas:
-
         random.shuffle(medicos_disponiveis_pausa)
-
         vagas_pausa = pausas_permitidas - medicos_em_pausa
         medicos_para_pausa = medicos_disponiveis_pausa[:vagas_pausa]
-
+        
         i = 0
         while i < len(medicos_para_pausa):
             medico = medicos_para_pausa[i]
-
             probabilidade_pausa = 0.7 if tamanho_fila_atual < 5 else 0.3
             if random.random() < probabilidade_pausa:
                 medico["em_pausa"] = True
@@ -2018,7 +1997,7 @@ def atualizar_simulacao(incremento_tempo):
                 medico["paciente_atual"] = None
                 medicos_em_pausa = medicos_em_pausa + 1
             i = i + 1
-
+    
     i = 0
     while i < len(medicos):
         medico = medicos[i]
@@ -2031,56 +2010,52 @@ def atualizar_simulacao(incremento_tempo):
             })
             medicos_em_pausa = max(0, medicos_em_pausa - 1)
         i = i + 1
-
+    
     if tempo_atual >= estado_simulacao["proximo_paciente_tempo"] and estado_simulacao["pacientes_disponiveis"]:
-
-        paciente = estado_simulacao["pacientes_disponiveis"].pop(0)
-
+        paciente = estado_simulacao["pacientes_disponiveis"][0]
+        estado_simulacao["pacientes_disponiveis"] = estado_simulacao["pacientes_disponiveis"][1:]
+        
         paciente["tempo_chegada"] = tempo_atual
-
-        medico_livre_especialidade = None
-        encontrou_medico_especialista = False
-        especialidade_necessaria = paciente.get("especialidade_necessaria", "Clínica Geral")
-
-        i = 0
-        while i < len(estado_simulacao["medicos"]) and not encontrou_medico_especialista:
-            medico = estado_simulacao["medicos"][i]
-            if (not medico["ocupado"] and not medico["em_pausa"] and 
-                medico["especialidade"] == especialidade_necessaria):
-                medico_livre_especialidade = medico
-                encontrou_medico_especialista = True
-            i = i + 1
-
-        if encontrou_medico_especialista:
-            iniciar_consulta(medico_livre_especialidade, paciente, tempo_atual)
-        else:
-
-            estado_simulacao["fila_espera"] = adicionar_a_fila(estado_simulacao["fila_espera"], paciente)
-            estado_simulacao["fila_espera"] = ordenar_fila_por_prioridade(estado_simulacao["fila_espera"],PRIORIDADES)
+        
+        estado_simulacao["fila_espera"] = adicionar_a_fila(estado_simulacao["fila_espera"], paciente)
+        
+        estado_simulacao["fila_espera"] = ordenar_fila_por_prioridade(
+            estado_simulacao["fila_espera"], PRIORIDADES
+        )
         
         if estado_simulacao["pacientes_disponiveis"]:
             lambda_chegada = estado_simulacao["lambda_chegada"]
             lambda_minuto = lambda_chegada / 60.0
+            
             if lambda_minuto > 0:
                 tempo_medio_entre_chegadas = 1.0 / lambda_minuto
             else:
-                tempo_medio_entre_chegadas = 60.0  
+                tempo_medio_entre_chegadas = 60.0
+            
             proximo_tempo = np.random.exponential(scale=tempo_medio_entre_chegadas)
-            proximo_tempo = max(0.5, proximo_tempo)  
+            proximo_tempo = max(0.5, proximo_tempo)
             estado_simulacao["proximo_paciente_tempo"] = tempo_atual + proximo_tempo
+    
     i = 0
     while i < len(estado_simulacao["medicos"]):
         medico = estado_simulacao["medicos"][i]
         if medico["ocupado"] and tempo_atual >= medico["tempo_fim_consulta"]:
             finalizar_consulta(medico, tempo_atual)
         i = i + 1
-
-    tempo_ultima_desistencia = estado_simulacao.get("tempo_ultima_desistencia", 0)
-    if tempo_atual - tempo_ultima_desistencia >= 5.0:
-        processar_desistencias()
-        estado_simulacao["tempo_ultima_desistencia"] = tempo_atual
+    
+    i = 0
+    while i < len(estado_simulacao["medicos"]):
+        medico = estado_simulacao["medicos"][i]
+        
+        if not medico["ocupado"] and not medico["em_pausa"]:
+            if not queue_empty(estado_simulacao["fila_espera"]):
+                finalizar_consulta(medico, tempo_atual)
+        
+        i = i + 1
+    
+    processar_desistencias()
+    
     coletar_dados_historicos()
-
 def salvar_resultado_simulacao():
     resultado = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2107,15 +2082,26 @@ def salvar_resultado_simulacao():
     }
     estado_simulacao["resultados_simulacoes"].append(resultado)
 def iniciar_consulta(medico, paciente, tempo_atual):
-    duracao = gera_tempo_consulta(estado_simulacao["tempo_medio_consulta"], estado_simulacao["distribuicao"])
+    """Inicia uma consulta - VERSÃO CORRIGIDA"""
     
+
+    duracao = gera_tempo_consulta(
+        estado_simulacao["tempo_medio_consulta"], 
+        estado_simulacao["distribuicao"]
+    )
+    
+
     medico["ocupado"] = True
     medico["paciente_atual"] = paciente["id"]
     medico["tempo_fim_consulta"] = tempo_atual + duracao
     medico["num_atendimentos"] = medico["num_atendimentos"] + 1
     
-    especialidade_correta = medico["especialidade"] == paciente.get("especialidade_necessaria", "Clínica Geral")
+
+    especialidade_correta = medico["especialidade"] == paciente.get(
+        "especialidade_necessaria", "Clínica Geral"
+    )
     
+
     estado_simulacao["historico_atendimentos"].append({
         "paciente": paciente["id"],
         "medico": medico["id"],
@@ -2127,38 +2113,116 @@ def iniciar_consulta(medico, paciente, tempo_atual):
 
 
 def finalizar_consulta(medico, tempo_atual):
-    duracao_real = tempo_atual - (medico["tempo_fim_consulta"] - estado_simulacao["tempo_medio_consulta"])
-    medico["tempo_total_ocupado"] = medico["tempo_total_ocupado"] + duracao_real
+    """Finaliza consulta do médico e procura próximo paciente - VERSÃO CORRIGIDA"""
+ 
+    if medico["ocupado"] and medico.get("tempo_fim_consulta", 0) > 0:
+        duracao_consulta = estado_simulacao.get("tempo_medio_consulta", 15)
+        tempo_inicio_consulta = medico["tempo_fim_consulta"] - duracao_consulta
+        duracao_real = tempo_atual - tempo_inicio_consulta
+ 
+        if duracao_real > 0:
+            medico["tempo_total_ocupado"] = medico["tempo_total_ocupado"] + duracao_real
+
     medico["ocupado"] = False
     medico["paciente_atual"] = None
-    
-    if not queue_empty(estado_simulacao["fila_espera"]):
-        paciente_especialidade_correspondente = None
-        fila_temp = []
-        encontrou_correspondente = False
-        
-        while not queue_empty(estado_simulacao["fila_espera"]) and not encontrou_correspondente:
-            paciente, estado_simulacao["fila_espera"] = remover_da_fila(estado_simulacao["fila_espera"])
-            
-            if paciente.get("especialidade_necessaria") == medico["especialidade"]:
-                paciente_especialidade_correspondente = paciente
-                encontrou_correspondente = True
-            else:
-                fila_temp = adicionar_a_fila(fila_temp, paciente)
-        
-        while not queue_empty(fila_temp):
-            paciente, fila_temp = remover_da_fila(fila_temp)
-            estado_simulacao["fila_espera"] = adicionar_a_fila(estado_simulacao["fila_espera"], paciente)
-        
-        estado_simulacao["fila_espera"] = ordenar_fila_por_prioridade(estado_simulacao["fila_espera"], PRIORIDADES)
-        
-        if paciente_especialidade_correspondente:
-            iniciar_consulta(medico, paciente_especialidade_correspondente, tempo_atual)
-    else:
-        medico["ocupado"] = False
-        medico["paciente_atual"] = None
+    medico["tempo_fim_consulta"] = 0
 
+    if queue_empty(estado_simulacao["fila_espera"]):
+        return
+
+    tempo_max_espera = estado_simulacao.get("tempo_max_espera", TEMPO_MAX_ESPERA)
+    medico_especialidade = medico["especialidade"]
+    
+    paciente_escolhido = None
+    indice_escolhido = -1
+    
+    idx_busca = 0
+    encontrou_paciente = False
+    
+    while idx_busca < len(estado_simulacao["fila_espera"]) and not encontrou_paciente:
+        paciente = estado_simulacao["fila_espera"][idx_busca]
+        paciente_prioridade = paciente.get("prioridade", "NORMAL")
+        paciente_especialidade = paciente.get("especialidade_necessaria", "Clínica Geral")
+        tempo_chegada = paciente.get("tempo_chegada", tempo_atual)
+        tempo_espera = tempo_atual - tempo_chegada
+        
+        pode_atender = False
+
+        if medico_especialidade == paciente_especialidade:
+
+            tem_maior_prioridade_mesma_especialidade = False
+            j = 0
+            while j < idx_busca and not tem_maior_prioridade_mesma_especialidade:
+                paciente_frente = estado_simulacao["fila_espera"][j]
+                if paciente_frente.get("especialidade_necessaria") == paciente_especialidade:
+                    frente_prioridade = paciente_frente.get("prioridade", "NORMAL")
+                    if PRIORIDADES.get(frente_prioridade, 5) < PRIORIDADES.get(paciente_prioridade, 5):
+                        tem_maior_prioridade_mesma_especialidade = True
+                j = j + 1
+            
+            if not tem_maior_prioridade_mesma_especialidade:
+                pode_atender = True
+        else:
+
+            if paciente_prioridade == "URGENTE" and tempo_espera > 5:
+                pode_atender = True
+            
+            elif paciente_prioridade == "ALTA" and tempo_espera > (tempo_max_espera / 2):
+                tem_urgente_na_frente = False
+                j = 0
+                while j < idx_busca and not tem_urgente_na_frente:
+                    paciente_frente = estado_simulacao["fila_espera"][j]
+                    if paciente_frente.get("prioridade") == "URGENTE":
+                        tem_urgente_na_frente = True
+                    j = j + 1
+                
+                if not tem_urgente_na_frente:
+                    pode_atender = True
+            
+            elif paciente_prioridade == "NORMAL" and tempo_espera > tempo_max_espera and medico_especialidade == "Clínica Geral":
+                tem_prioridade_na_frente = False
+                j = 0
+                while j < idx_busca and not tem_prioridade_na_frente:
+                    paciente_frente = estado_simulacao["fila_espera"][j]
+                    if paciente_frente.get("prioridade") in ["URGENTE", "ALTA"]:
+                        tem_prioridade_na_frente = True
+                    j = j + 1
+                
+                tem_especialista_da_especialidade = False
+                k = 0
+                while k < len(estado_simulacao["medicos"]) and not tem_especialista_da_especialidade:
+                    outro_medico = estado_simulacao["medicos"][k]
+                    if outro_medico["especialidade"] == paciente_especialidade:
+                        if not outro_medico["ocupado"] and not outro_medico.get("em_pausa", False):
+                            tem_especialista_da_especialidade = True
+                    k = k + 1
+                
+                if not tem_prioridade_na_frente and not tem_especialista_da_especialidade:
+                    pode_atender = True
+        
+        if pode_atender:
+            paciente_escolhido = paciente
+            indice_escolhido = idx_busca
+            encontrou_paciente = True
+        
+        idx_busca = idx_busca + 1
+
+    if paciente_escolhido is not None:
+        nova_fila = []
+        i = 0
+        while i < len(estado_simulacao["fila_espera"]):
+            if i != indice_escolhido:
+                nova_fila.append(estado_simulacao["fila_espera"][i])
+            i = i + 1
+        estado_simulacao["fila_espera"] = nova_fila
+        
+        estado_simulacao["fila_espera"] = ordenar_fila_por_prioridade(
+            estado_simulacao["fila_espera"], PRIORIDADES
+        )
+        
+        iniciar_consulta(medico, paciente_escolhido, tempo_atual)
 def obter_estatisticas():
+    """Obtém estatísticas atuais da simulação - VERSÃO CORRIGIDA"""
     tempo_atual = estado_simulacao["tempo_atual"]
     
     stats = {
@@ -2172,39 +2236,64 @@ def obter_estatisticas():
         "aguardando": len(estado_simulacao["pacientes_disponiveis"])
     }
     
+
     if tempo_atual > 0:
         taxas_ocupacao = []
-        for medico in estado_simulacao["medicos"]:
-            taxa = min(100.0, (medico["tempo_total_ocupado"] / tempo_atual) * 100)
+        i = 0
+        while i < len(estado_simulacao["medicos"]):
+            medico = estado_simulacao["medicos"][i]
+            tempo_ocupado = medico["tempo_total_ocupado"]
+            
+            
+            if medico["ocupado"] and medico.get("tempo_fim_consulta", 0) > 0:
+                tempo_medio = estado_simulacao.get("tempo_medio_consulta", 15)
+                tempo_inicio_atual = medico["tempo_fim_consulta"] - tempo_medio
+                tempo_ocupado_atual = tempo_atual - tempo_inicio_atual
+                if tempo_ocupado_atual > 0:
+                    tempo_ocupado = tempo_ocupado + tempo_ocupado_atual
+            
+           
+            taxa = (tempo_ocupado / tempo_atual) * 100
+            taxa = min(100.0, max(0.0, taxa))
             taxas_ocupacao.append(taxa)
+            i = i + 1
+        
         stats["taxa_ocupacao"] = np.mean(taxas_ocupacao) if taxas_ocupacao else 0
     else:
         stats["taxa_ocupacao"] = 0
-    
-    duracoes = [h["duracao"] for h in estado_simulacao["historico_atendimentos"]]
+
+    duracoes = []
+    i = 0
+    while i < len(estado_simulacao["historico_atendimentos"]):
+        duracoes.append(estado_simulacao["historico_atendimentos"][i]["duracao"])
+        i = i + 1
     stats["tempo_medio_consulta"] = np.mean(duracoes) if duracoes else 0
-    
+
     atendimentos_especialidade_correta = 0
-    for h in estado_simulacao["historico_atendimentos"]:
+    i = 0
+    while i < len(estado_simulacao["historico_atendimentos"]):
+        h = estado_simulacao["historico_atendimentos"][i]
         if h.get("especialidade_correta", False):
             atendimentos_especialidade_correta = atendimentos_especialidade_correta + 1
+        i = i + 1
     
     total_atendimentos = len(estado_simulacao["historico_atendimentos"])
     if total_atendimentos > 0:
         stats["taxa_correspondencia_especialidade"] = (atendimentos_especialidade_correta / total_atendimentos) * 100
     else:
         stats["taxa_correspondencia_especialidade"] = 0
-    
+
     fila_por_especialidade = {}
-    for paciente in estado_simulacao["fila_espera"]:
+    i = 0
+    while i < len(estado_simulacao["fila_espera"]):
+        paciente = estado_simulacao["fila_espera"][i]
         especialidade = paciente.get("especialidade_necessaria", "Clínica Geral")
         fila_por_especialidade[especialidade] = fila_por_especialidade.get(especialidade, 0) + 1
+        i = i + 1
     
     stats["fila_por_especialidade"] = fila_por_especialidade
     
     return stats
-
-
 def inicializar_simulacao(config):
     pessoas = carregar_pacientes_simula()
     if not pessoas:
@@ -2220,26 +2309,13 @@ def inicializar_simulacao(config):
     tempo_total_horas = tempo_total / 60.0
     
     max_pacientes_dataset = len(pessoas)
-    
-    num_esperado_poisson = lambda_chegada * tempo_total_horas
-    
-    if num_esperado_poisson > max_pacientes_dataset:
-        num_esperado_poisson = max_pacientes_dataset
-    
-    if num_esperado_poisson > max_pacientes_dataset * 0.9:
-        num_esperado_poisson = int(max_pacientes_dataset * 0.9)
-    
-    if num_esperado_poisson < 10:
-        num_pacientes_final = num_esperado_poisson
-    else:
-        num_poisson = np.random.poisson(num_esperado_poisson)
-        min_pacientes = int(num_esperado_poisson * 0.7)
-        max_pacientes = min(int(num_esperado_poisson * 1.3), max_pacientes_dataset)
-        num_pacientes_final = max(min_pacientes, min(num_poisson, max_pacientes))
-    
-    if num_pacientes_final > max_pacientes_dataset:
+
+    num_esperado_chegadas = lambda_chegada * tempo_total_horas
+
+    num_pacientes_final = min(int(num_esperado_chegadas), max_pacientes_dataset)
+
+    if num_esperado_chegadas >= max_pacientes_dataset:
         num_pacientes_final = max_pacientes_dataset
-    
     if num_pacientes_final < max_pacientes_dataset:
         indices = list(range(max_pacientes_dataset))
         random.shuffle(indices)
@@ -2247,7 +2323,6 @@ def inicializar_simulacao(config):
         pessoas_selecionadas = [pessoas[i] for i in indices_selecionados]
     else:
         pessoas_selecionadas = pessoas.copy()
-    
     pessoas_simulacao = []
     for p in pessoas_selecionadas:
         p_copy = p.copy()
@@ -2773,7 +2848,7 @@ def gerar_graficos():
     
     window.close()
 def comparar_simulacoes():
-    """Comparar simulações com gráficos completos por abas"""
+    """Comparar simulações com gráficos completos por abas - VERSÃO CORRIGIDA"""
     resultados = estado_simulacao.get("resultados_simulacoes", [])
     
     if len(resultados) < 2:
@@ -2881,7 +2956,6 @@ def comparar_simulacoes():
             if sim.get("dados_historicos"):
                 simulacoes.append(sim)
                 
-                
                 config = sim["configuracao"]
                 legendas.append(f"λ={config.get('lambda_chegada', 0):.1f} M={config.get('num_medicos', 0)}")
         
@@ -2890,7 +2964,6 @@ def comparar_simulacoes():
     if len(simulacoes) < 2:
         sg.popup_error("Dados insuficientes para comparação!", title="Erro")
         return
-    
 
     dados_por_simulacao = []
     
@@ -2910,41 +2983,45 @@ def comparar_simulacoes():
         while dados_idx < len(dados):
             registro = dados[dados_idx]
             if isinstance(registro, dict):
-       
+
                 tempo_val = registro.get("tempo")
                 if tempo_val is not None and isinstance(tempo_val, (int, float)):
                     tempos.append(float(tempo_val))
                 else:
                     tempos.append(0.0)
-                
-             
+
                 fila_val = registro.get("fila_tamanho")
                 if fila_val is not None and isinstance(fila_val, (int, float)):
                     fila_tamanhos.append(float(fila_val))
                 else:
                     fila_tamanhos.append(0.0)
                 
-            
+
                 ocupacao_val = registro.get("taxa_ocupacao")
-                if ocupacao_val is not None and isinstance(ocupacao_val, (int, float)):
-                    taxas_ocupacao.append(float(ocupacao_val))
-                else:
-                    taxas_ocupacao.append(0.0)
                 
-           
+                if ocupacao_val is not None and isinstance(ocupacao_val, (int, float)):
+
+                    ocupacao_val = float(ocupacao_val)
+                    ocupacao_val = min(100.0, max(0.0, ocupacao_val))
+                    taxas_ocupacao.append(ocupacao_val)
+                else:
+
+                    taxas_ocupacao.append(0.0)
+
                 atendidos_val = registro.get("atendidos")
                 if atendidos_val is not None and isinstance(atendidos_val, (int, float)):
                     atendidos_lista.append(int(atendidos_val))
                 else:
                     atendidos_lista.append(0)
                 
-           
+
                 desistentes_val = registro.get("desistentes")
                 if desistentes_val is not None and isinstance(desistentes_val, (int, float)):
                     desistentes_lista.append(int(desistentes_val))
                 else:
                     desistentes_lista.append(0)
                
+
                 espera_val = registro.get("tempo_medio_espera")
                 if espera_val is not None and isinstance(espera_val, (int, float)):
                     tempos_espera.append(float(espera_val))
@@ -2961,7 +3038,8 @@ def comparar_simulacoes():
             "desistentes_lista": desistentes_lista,
             "tempos_espera": tempos_espera,
             "cor": cores[i % len(cores)],
-            "legenda": legendas[i]
+            "legenda": legendas[i],
+            "resultados_finais": sim.get("resultados_finais", {})
         })
         
         i = i + 1
@@ -3009,6 +3087,7 @@ def comparar_simulacoes():
     window_principal = sg.Window("Comparação de Simulações", layout_principal, modal=True, finalize=True, 
                       size=(800, 600), resizable=True, keep_on_top=True)
     
+    # Gráfico 1: Tamanho da Fila
     fig1 = Figure(figsize=(8, 5), dpi=100)
     ax1 = fig1.add_subplot(111)
     
@@ -3044,6 +3123,7 @@ def comparar_simulacoes():
     canvas1.draw()
     canvas1.get_tk_widget().pack(side='top', fill='both', expand=True)
     
+
     fig2 = Figure(figsize=(8, 5), dpi=100)
     ax2 = fig2.add_subplot(111)
     
@@ -3053,11 +3133,22 @@ def comparar_simulacoes():
         tempos = dados["tempos"]
         taxas_ocupacao = dados["taxas_ocupacao"]
         
+
         tamanho_min = min(len(tempos), len(taxas_ocupacao))
         if tamanho_min > 0:
             tempos_ajustados = tempos[:tamanho_min]
             ocupacao_ajustada = taxas_ocupacao[:tamanho_min]
             
+
+            ocupacao_validada = []
+            j = 0
+            while j < len(ocupacao_ajustada):
+                val = ocupacao_ajustada[j]
+                val = min(100.0, max(0.0, float(val)))
+                ocupacao_validada.append(val)
+                j = j + 1
+            
+
             if len(tempos_ajustados) > 200:
                 tempos_reduzidos = []
                 ocupacao_reduzida = []
@@ -3065,12 +3156,14 @@ def comparar_simulacoes():
                 j = 0
                 while j < len(tempos_ajustados):
                     tempos_reduzidos.append(tempos_ajustados[j])
-                    ocupacao_reduzida.append(ocupacao_ajustada[j])
+                    ocupacao_reduzida.append(ocupacao_validada[j])
                     j = j + passo
                 tempos_ajustados = tempos_reduzidos
-                ocupacao_ajustada = ocupacao_reduzida
+                ocupacao_validada = ocupacao_reduzida
             
-            ax2.plot(tempos_ajustados, ocupacao_ajustada, color=dados["cor"], linewidth=2, label=dados["legenda"])
+
+            if tempos_ajustados and ocupacao_validada:
+                ax2.plot(tempos_ajustados, ocupacao_validada, color=dados["cor"], linewidth=2, label=dados["legenda"])
         
         i = i + 1
     
@@ -3086,6 +3179,7 @@ def comparar_simulacoes():
     canvas2.draw()
     canvas2.get_tk_widget().pack(side='top', fill='both', expand=True)
     
+
     fig3 = Figure(figsize=(8, 5), dpi=100)
     ax3 = fig3.add_subplot(111)
     
@@ -3127,6 +3221,7 @@ def comparar_simulacoes():
     canvas3.draw()
     canvas3.get_tk_widget().pack(side='top', fill='both', expand=True)
 
+
     fig4 = Figure(figsize=(8, 5), dpi=100)
     ax4 = fig4.add_subplot(111)
     
@@ -3146,7 +3241,6 @@ def comparar_simulacoes():
             j = j + 1
         
         if tempos_filtrados:
-
             if len(tempos_filtrados) > 200:
                 tempos_reduzidos = []
                 espera_reduzida = []
@@ -3174,6 +3268,7 @@ def comparar_simulacoes():
     canvas4.draw()
     canvas4.get_tk_widget().pack(side='top', fill='both', expand=True)
 
+
     fig5 = Figure(figsize=(8, 5), dpi=100)
     ax5 = fig5.add_subplot(111)
     
@@ -3191,13 +3286,20 @@ def comparar_simulacoes():
         nomes_simulacoes.append(f"Sim {i+1}")
         atendidos_finais.append(resultados.get("atendidos", 0))
         desistentes_finais.append(resultados.get("desistentes", 0))
-        ocupacao_media.append(resultados.get("taxa_ocupacao_media", 0))
+
+        ocupacao_val = resultados.get("taxa_ocupacao_media", 0)
+        if isinstance(ocupacao_val, (int, float)):
+            ocupacao_val = float(ocupacao_val)
+            ocupacao_val = min(100.0, max(0.0, ocupacao_val))
+            ocupacao_media.append(ocupacao_val)
+        else:
+            ocupacao_media.append(0.0)
         
         tempo_espera = resultados.get("tempo_medio_espera", 0)
         if isinstance(tempo_espera, (int, float)):
-            tempo_espera_medio.append(tempo_espera)
+            tempo_espera_medio.append(float(tempo_espera))
         else:
-            tempo_espera_medio.append(0)
+            tempo_espera_medio.append(0.0)
         
         i = i + 1
 
@@ -3206,8 +3308,8 @@ def comparar_simulacoes():
     
     ax5.bar(x - largura*1.5, atendidos_finais, largura, label='Atendidos', color='green', alpha=0.7)
     ax5.bar(x - largura*0.5, desistentes_finais, largura, label='Desistentes', color='red', alpha=0.7)
-    ax5.bar(x + largura*0.5, ocupacao_media, largura, label='Ocupação Média', color=escuro, alpha=0.7)
-    ax5.bar(x + largura*1.5, tempo_espera_medio, largura, label='Espera Média', color='orange', alpha=0.7)
+    ax5.bar(x + largura*0.5, ocupacao_media, largura, label='Ocupação Média (%)', color=escuro, alpha=0.7)
+    ax5.bar(x + largura*1.5, tempo_espera_medio, largura, label='Espera Média (min)', color='orange', alpha=0.7)
     
     ax5.set_xlabel('Simulação')
     ax5.set_ylabel('Valores')
@@ -3229,7 +3331,6 @@ def comparar_simulacoes():
     canvas5.draw()
     canvas5.get_tk_widget().pack(side='top', fill='both', expand=True)
     
-
     continuar_principal = True
     while continuar_principal:
         event_principal, values_principal = window_principal.read()
@@ -3238,7 +3339,6 @@ def comparar_simulacoes():
             continuar_principal = False
         
         elif event_principal == "Exportar Dados":
-           
             dados_texto = "Simulação;Atendidos;Desistentes;Ocupação Média;Espera Média;Fila Máxima\n"
             i = 0
             while i < len(simulacoes):
@@ -3261,7 +3361,6 @@ def comparar_simulacoes():
                 sg.popup(f"Dados exportados para:\n{arquivo_salvo}", title="Sucesso", keep_on_top=True)
     
     window_principal.close()
-
 def gerar_graficos_comparativos(indices):
     """Gráfico comparativo simples"""
     
@@ -3442,9 +3541,6 @@ def mostrar_relatorio_comparativo(indices_simulacoes):
 
 
 
-# ============================================================================
-# FUNÇÕES DE INTERFACE PRINCIPAL
-# ============================================================================
 
 def criar_layout_principal():
     sg.theme('TemaClinica')
@@ -3674,10 +3770,39 @@ def atualizar_detalhes_paciente(window):
     else:
         window["-PAC_DOENCA-"].update(pessoa.get("doenca", "-")[:30])
     
-    atendido = any(h.get("paciente") == paciente_id for h in estado_simulacao["historico_atendimentos"])
-    na_fila = any(p.get("id") == paciente_id for p in estado_simulacao["fila_espera"])
-    em_consulta = any(m.get("paciente_atual") == paciente_id for m in estado_simulacao["medicos"])
-    desistente = any(p.get("id") == paciente_id for p in estado_simulacao.get("pacientes_desistentes", []))
+
+    atendido = False
+    historico = estado_simulacao["historico_atendimentos"]
+    i = 0
+    while i < len(historico):
+        if historico[i].get("paciente") == paciente_id:
+            atendido = True
+        i = i + 1
+
+    na_fila = False
+    fila = estado_simulacao["fila_espera"]
+    j = 0
+    while j < len(fila):
+        if fila[j].get("id") == paciente_id:
+            na_fila = True
+        j = j + 1
+
+    em_consulta = False
+    medicos = estado_simulacao["medicos"]
+    k = 0
+    while k < len(medicos):
+        if medicos[k].get("paciente_atual") == paciente_id:
+            em_consulta = True
+        k = k + 1
+    
+
+    desistente = False
+    desistentes = estado_simulacao.get("pacientes_desistentes", [])
+    l = 0
+    while l < len(desistentes):
+        if desistentes[l].get("id") == paciente_id:
+            desistente = True
+        l = l + 1
     
     if desistente:
         window["-PAC_STATUS-"].update("Desistente", text_color='red')
@@ -3691,9 +3816,10 @@ def atualizar_detalhes_paciente(window):
     elif na_fila:
         window["-PAC_STATUS-"].update("Na fila", text_color='orange')
         encontrou = False
-        for p in estado_simulacao["fila_espera"]:
-            if p.get("id") == paciente_id:
-                tempo_espera = tempo_atual - p.get("tempo_chegada", 0)
+        m = 0
+        while m < len(fila) and not encontrou:
+            if fila[m].get("id") == paciente_id:
+                tempo_espera = tempo_atual - fila[m].get("tempo_chegada", 0)
                 if tempo_espera > tempo_max_espera * 0.7:
                     window["-PAC_ESPERA-"].update(f"⚠ {tempo_espera:.0f} min", text_color='red')
                 elif tempo_espera > tempo_max_espera * 0.5:
@@ -3701,7 +3827,7 @@ def atualizar_detalhes_paciente(window):
                 else:
                     window["-PAC_ESPERA-"].update(f"{tempo_espera:.0f} min", text_color='green')
                 encontrou = True
-                break
+            m = m + 1
     else:
         window["-PAC_STATUS-"].update("À espera", text_color='gray')
         window["-PAC_ESPERA-"].update("-")
@@ -3732,9 +3858,7 @@ def apagar_interface_principal(window):
     window["-PLAY-"].update(disabled=False)
     window["-PAUSE-"].update(disabled=True)
     window["-STOP-"].update(disabled=True)
-# ============================================================================
-# FUNÇÃO MAIN PRINCIPAL
-# ============================================================================
+
 
 
 
@@ -3759,8 +3883,7 @@ def janela_configuracao():
         [sg.Frame("Parâmetros de Chegada (Distribuição de Poisson)", [
             [sg.Text("Taxa de chegada (λ) pacientes/hora:", size=(30,1)),
              sg.Input(default_text=str(LAMBDA_CHEGADA), key="-LAMBDA-", size=(10,1))],
-            [sg.Text(f"Dataset disponível: {max_pacientes} pacientes", font=("Helvetica", 10), text_color='darkgreen')],
-            [sg.Text(f"Lambda máximo recomendado: {lambda_maximo:.1f} (para usar todo o dataset)", 
+            [sg.Text(f"Taxa de chegada(λ) máxima recomendado: {lambda_maximo:.1f} (para usar todo o dataset)", 
                     font=("Helvetica", 9), text_color='blue')],
             [sg.Text(f"Simulação padrão: {TEMPO_SIMULACAO} min = {tempo_sim_padrao:.1f} horas", 
                     font=("Helvetica", 9))]
@@ -3785,7 +3908,7 @@ def janela_configuracao():
             [sg.Text("IMPORTANTE:", font=("Helvetica", 9, 'bold'), text_color='red')],
             [sg.Text("• Máx. 1/3 dos médicos em pausa simultânea", font=("Helvetica", 9), text_color='red')],
             [sg.Text("• Duração: mínimo 15 min, máximo 20 min", font=("Helvetica", 9), text_color='blue')],
-            [sg.Text("• Pelo menos 1 médico por especialidade trabalhando", font=("Helvetica", 9), text_color='blue')]
+            [sg.Text("• Pelo menos 1 médico por especialidade a trabalhar", font=("Helvetica", 9), text_color='blue')]
         ], expand_x=True)],
         [sg.Frame("Regras de Abandono", [
             [sg.Text("Tempo máx. espera (min):", size=(30,1)),
@@ -3929,6 +4052,9 @@ def janela_configuracao():
                     elif tempo_sim_val == 0:
                         dados_validos = False
                         erro_mensagem = "ERRO: Tempo simulação não pode ser zero!"
+                    elif tempo_sim_val >480:
+                        dados_validos = False
+                        erro_mensagem = "ERRO: O Tempo máximo de simulação é 480 min (8h)!"
             
             if dados_validos:
                 if not num_medicos_str:
@@ -3936,7 +4062,7 @@ def janela_configuracao():
                     erro_mensagem = "ERRO: Nº médicos não pode ser vazio!"
                 elif not num_medicos_str.replace('.','',1).replace('-','',1).isdigit():
                     dados_validos = False
-                    erro_mensagem = "ERRO: Nº médicos numérico!"
+                    erro_mensagem = "ERRO: Nº médicos deve ser numérico!"
                 else:
                     num_medicos = int(float(num_medicos_str))
                     if num_medicos < 0:
@@ -3945,6 +4071,10 @@ def janela_configuracao():
                     elif num_medicos == 0:
                         dados_validos = False
                         erro_mensagem = "ERRO: Nº médicos não pode ser zero!"
+                    elif num_medicos > len(medicos_dataset):
+                        dados_validos = False
+                        erro_mensagem = f"ERRO: Nº médicos ({num_medicos}) é demasiado elevado para o dataset!\n" \
+                                    f"Nº máximo permitido: {len(medicos_dataset)}"
             
             if dados_validos:
                 if not freq_pausa_str:
@@ -3987,9 +4117,9 @@ def janela_configuracao():
                     erro_mensagem = "ERRO: Nº pausas numérico!"
                 else:
                     num_pausas_val = int(float(num_pausas_str))
-                    if num_pausas_val < 0:
+                    if num_pausas_val <=0:
                         dados_validos = False
-                        erro_mensagem = "ERRO: Nº pausas não pode ser negativo!"
+                        erro_mensagem = "ERRO: Nº pausas não pode ser negativo nem zero!"
             
             if dados_validos:
                 if not max_pausa_str:
@@ -4155,14 +4285,16 @@ def janela_configuracao():
                     elif tempo_sim_val == 0:
                         dados_validos = False
                         erro_mensagem = "ERRO: Tempo simulação não pode ser zero!"
-            
+                    elif tempo_sim_val >480:
+                        dados_validos = False
+                        erro_mensagem = "ERRO: O Tempo máximo de simulação é 480 min (8h)!"
             if dados_validos:
                 if not num_medicos_str:
                     dados_validos = False
                     erro_mensagem = "ERRO: Nº médicos não pode ser vazio!"
                 elif not num_medicos_str.replace('.','',1).replace('-','',1).isdigit():
                     dados_validos = False
-                    erro_mensagem = "ERRO: Nº médicos numérico!"
+                    erro_mensagem = "ERRO: Nº médicos deve ser numérico!"
                 else:
                     num_medicos = int(float(num_medicos_str))
                     if num_medicos < 0:
@@ -4171,6 +4303,10 @@ def janela_configuracao():
                     elif num_medicos == 0:
                         dados_validos = False
                         erro_mensagem = "ERRO: Nº médicos não pode ser zero!"
+                    elif num_medicos > len(medicos_dataset):
+                        dados_validos = False
+                        erro_mensagem = f"ERRO: Nº médicos ({num_medicos}) é demasiado elevado para o dataset!\n" \
+                                    f"Nº máximo permitido: {len(medicos_dataset)}"
             
             if dados_validos:
                 if not freq_pausa_str:
@@ -4500,9 +4636,9 @@ def mostrar_relatorio_desempenho_com_abas(dados_selecionados, titulo):
             nome_arquivo = f"desempenho_medicos_{titulo.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             arquivo_salvo = salvar_arquivo(relatorio_texto, nome_arquivo)
             if arquivo_salvo:
-                sg.popup(f"Relatório exportado para:\n{arquivo_salvo}", title="Sucesso")
+                sg.popup(f"Relatório exportado para:\n{arquivo_salvo}", title="Sucesso", keep_on_top=True, modal=True)
             else:
-                sg.popup_error("Falha ao salvar o relatório.", title="Erro")
+                sg.popup_error("Falha ao salvar o relatório.", title="Erro",keep_on_top=True, modal=True)
     
     window.close()
 
@@ -4672,7 +4808,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             medicos_recebidos.append(medicos_carregados[j])
             j = j + 1
         
-
         pacientes = []
         
         k = 0
@@ -4715,7 +4850,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
         pessoas_dados_recebidas = dados_simulacao.get("pessoas_dados", {})
         medicos_recebidos = dados_simulacao.get("medicos", [])
         
-
         if not historico_atendimentos and not pessoas_dados_recebidas:
             historico_atendimentos = estado_simulacao.get("historico_atendimentos", [])
             pessoas_dados_recebidas = estado_simulacao.get("pessoas_dados", {})
@@ -4734,15 +4868,14 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             medicos_carregados = carregar_medicos_simula()
             medicos_recebidos = medicos_carregados
         
-
         pacientes = carregar_dados_pacientes_atendidos(historico_atendimentos, medicos_recebidos, pessoas_dados_recebidas)
     
     if not pacientes:
         sg.popup("Nenhum paciente encontrado.", title="Informação")
         return
+    
     def extrair_numero_id(paciente_id):
         if isinstance(paciente_id, str):
-            
             numeros_encontrados = []
             i = 0
             while i < len(paciente_id):
@@ -4757,7 +4890,7 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
                     i = i + 1
             if numeros_encontrados:
                 return numeros_encontrados[0]
-        return 999999 
+        return 999999
     
     pacientes_ordenados = sorted(pacientes, key=lambda x: extrair_numero_id(x.get("id", "")))
     
@@ -4809,7 +4942,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
 
     dados_tabela = []
     for p in pacientes_ordenados:
-       
         tempo_espera = p.get("tempo_espera", 0)
         if tempo_espera >= 60:
             horas = int(tempo_espera // 60)
@@ -4828,11 +4960,11 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
         
         status = p.get("status", "")
         if status == "ATENDIDO":
-            status_str = "✓ Atendido"
+            status_str = "Atendido"
         elif status == "NA FILA":
-            status_str = "⏳ Na fila"
+            status_str = "Na fila"
         else:
-            status_str = "✗ Desistente"
+            status_str = "Desistente"
         
         dados_tabela.append([
             p.get("id", ""),
@@ -5029,7 +5161,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             paciente = dados_originais[i]
             incluir = True
             
-           
             filtro_id = filtros.get("id", "").lower().strip()
             if filtro_id:
                 paciente_id = paciente.get("id", "").lower()
@@ -5084,7 +5215,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
         elif ordenacao == "nome_desc":
             return sorted(dados, key=lambda x: x.get("nome", "").lower(), reverse=True)
         elif ordenacao == "idade_asc":
-            
             def idade_para_ordenar(p):
                 idade_str = p.get("idade", "N/A")
                 if idade_str == "N/A":
@@ -5124,7 +5254,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             return
         
         sg.theme('TemaClinica')
-
         
         dados_pessoais = [
             ["ID:", paciente_selecionado.get("id", "N/A")],
@@ -5150,7 +5279,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             ["Crónico:", 'Sim' if paciente_selecionado.get('cronico') else 'Não']
         ]
 
-        
         conteudo_layout = [
             [sg.Text("FICHA DO PACIENTE", font=("Helvetica", 14, "bold"), text_color=escuro, pad=(0, 5))],
             
@@ -5175,7 +5303,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             [sg.Button("Fechar", size=(10, 1), button_color=('white', escuro), pad=(0, 10))]
         ]
 
-        
         layout = [[sg.Column(conteudo_layout, scrollable=True, vertical_scroll_only=True, 
                             size=(480, 560), element_justification='center', key='-COL-')]]
         
@@ -5188,13 +5315,10 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
         while True:
             event, values = window_detalhes.read()
             if event in (sg.WINDOW_CLOSED, "Fechar"):
-                break
+                window_detalhes.close()
+                return
         
-        window_detalhes.close()
-    
-
     def atualizar_tabela_com_valores(valores_atual, pacientes_lista):
-        
         filtros_dict = {
             "id": valores_atual.get("-FILTRO_ID-", ""),
             "nome": valores_atual.get("-FILTRO_NOME-", ""),
@@ -5206,7 +5330,6 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             "prioridade": valores_atual.get("-FILTRO_PRIORIDADE-", "Todas")
         }
         
-       
         ordenacao = "id_crescente"
         if valores_atual.get("-ORD_ID_DECRESC-"):
             ordenacao = "id_decrescente"
@@ -5229,15 +5352,11 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
         elif valores_atual.get("-ORD_ESPEC_ASC-"):
             ordenacao = "espec_asc"
         
-        
         dados_filtrados = aplicar_filtros_completos(pacientes_lista, filtros_dict)
-        
-        
         dados_filtrados_ordenados = aplicar_ordenacao(dados_filtrados, ordenacao)
         
         nova_tabela = []
         for p in dados_filtrados_ordenados:
-            
             tempo_espera = p.get("tempo_espera", 0)
             if tempo_espera >= 60:
                 horas = int(tempo_espera // 60)
@@ -5256,11 +5375,11 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
             
             status = p.get("status", "")
             if status == "ATENDIDO":
-                status_str = "✓ Atendido"
+                status_str = "Atendido"
             elif status == "NA FILA":
-                status_str = " Na fila"
+                status_str = "Na fila"
             else:
-                status_str = "✗ Desistente"
+                status_str = "Desistente"
             
             nova_tabela.append([
                 p.get("id", ""),
@@ -5546,9 +5665,7 @@ def mostrar_lista_atendimentos(dados_simulacao, titulo):
     
     window.close()
 
-# ============================================================================
-# MÓDULO DE DESEMPENHO MÉDICO COMPLETO
-# ============================================================================
+
 
 def gerar_relatorio_desempenho_medicos(medicos, tempo_atual, titulo_simulacao, estatisticas_especialidades=None):
     
@@ -5691,121 +5808,68 @@ def gerar_relatorio_desempenho_medicos(medicos, tempo_atual, titulo_simulacao, e
     return "\n".join(relatorio)
 
 def mostrar_desempenho_medicos():
-    
+    """Mostra análise de desempenho dos médicos - APENAS SIMULAÇÃO ATUAL"""
     sg.theme('TemaClinica')
     
-    resultados_simulacoes = estado_simulacao.get("resultados_simulacoes", [])
     historico_atendimentos = estado_simulacao.get("historico_atendimentos", [])
     medicos_atuais = estado_simulacao.get("medicos", [])
     
-    
     tem_dados_atuais = len(historico_atendimentos) > 0 and len(medicos_atuais) > 0
-    tem_sim_passadas = any(s.get("resultados_finais", {}).get("atendidos", 0) > 0 for s in resultados_simulacoes)
 
-    if not tem_dados_atuais and not tem_sim_passadas:
-        sg.popup_error("Nenhuma simulação com atendimentos disponível!", title="Erro")
+    if not tem_dados_atuais:
+        sg.popup_error("Nenhuma simulação com atendimentos disponível!\nExecute uma simulação primeiro.", title="Erro")
         return
 
-    
-    opcoes = []
-    if tem_dados_atuais:
-        t_atual = estado_simulacao.get("tempo_atual", 0)
-        opcoes.append(f"Simulação Atual ({len(historico_atendimentos)} atendidos, {t_atual:.0f} min)")
-    
-    for sim in resultados_simulacoes:
-        config = sim.get("configuracao", {})
-        res = sim.get("resultados_finais", {})
-        opcoes.append(f"λ={config.get('lambda_chegada', 0)} Atendidos={res.get('atendidos', 0)} ({sim.get('timestamp', '')[:16]})")
+    tempo_total_min = max(1, estado_simulacao.get("tempo_atual", 1))
+    horas_trabalhadas = tempo_total_min / 60.0
+    medicos_processados = []
 
-    layout_esc = [
-        [sg.Text("Selecionar Simulação", font=("Helvetica", 12, "bold"))], 
-        [sg.Listbox(opcoes, size=(70, 6), key="-SEL-", font=("Helvetica", 10))], 
-        [sg.Button("Continuar", size=(12, 1), button_color=('white', escuro)), 
-         sg.Button("Cancelar", size=(12, 1), button_color=('white', escuro))]
-    ]
-    
-    
-    window_esc = sg.Window("Análise de Desempenho", layout_esc, 
-                          modal=True, 
-                          finalize=True,
-                          keep_on_top=True,
-                          element_justification='center')
-    
-    escolha_confirmada = None
-    continuar = True
-    
-    while continuar:
-        event, values = window_esc.read(timeout=100)  # Adicionar timeout
+    for idx, medico in enumerate(medicos_atuais):
+        id_medico = medico.get("id", "")
         
-        if event in (sg.WINDOW_CLOSED, "Cancelar", None):
-            continuar = False
-            
-        elif event == "Continuar":
-            if values and "-SEL-" in values and values["-SEL-"]:
-                escolha_confirmada = values["-SEL-"][0]
-                continuar = False
-            else:
-                sg.popup_error("Selecione uma simulação!", title="Aviso", keep_on_top=True)
-    
-    
-    window_esc.close()
-    del window_esc  
-    
-    if not escolha_confirmada:
-        return
+        cont_atend = 0
+        cont_corretos = 0
+        lista_duracoes = []
 
-    dados_selecionados = None
+        for atend in historico_atendimentos:
+            id_atend = atend.get("medico", "")
+            if str(id_medico).lower().strip() == str(id_atend).lower().strip():
+                cont_atend += 1
+                duracao_atend = atend.get("duracao", 0)
+                if duracao_atend > 0:
+                    lista_duracoes.append(duracao_atend)
+                if atend.get("especialidade_correta", False):
+                    cont_corretos += 1
 
-    if "Simulação Atual" in escolha_confirmada:
-       
-        tempo_total_min = max(1, estado_simulacao.get("tempo_atual", 1))
-        horas_trabalhadas = tempo_total_min / 60.0
-        medicos_processados = []
+        soma_duracao = sum(lista_duracoes) if lista_duracoes else 0
+        eficiencia_calc = cont_atend / horas_trabalhadas if horas_trabalhadas > 0 else 0
+        t_medio_calc = soma_duracao / len(lista_duracoes) if lista_duracoes else 0
+        t_corresp_calc = (cont_corretos / cont_atend * 100) if cont_atend > 0 else 0
+        
+        tempo_ocupado = medico.get("tempo_total_ocupado", soma_duracao)
+        t_ocup_calc = (tempo_ocupado / tempo_total_min * 100) if tempo_total_min > 0 else 0
+        t_ocup_calc = min(100.0, max(0.0, t_ocup_calc))
 
-        for idx, medico in enumerate(medicos_atuais):
-            
-            id_medico = medico.get("id", "")
-            
-            cont_atend = 0
-            cont_corretos = 0
-            soma_duracao = 0
+        medicos_processados.append({
+            "id": medico.get("id", f"M{idx+1}"),
+            "nome": medico.get("nome", f"Médico {idx+1}"),
+            "especialidade": medico.get("especialidade", "Geral"),
+            "num_atendimentos": cont_atend,
+            "tempo_total_ocupado": tempo_ocupado,
+            "tempo_medio_consulta": t_medio_calc,
+            "taxa_correspondencia": t_corresp_calc,
+            "taxa_ocupacao": t_ocup_calc,
+            "eficiencia": eficiencia_calc
+        })
 
-            for atend in historico_atendimentos:
-                id_atend = atend.get("medico", "")
-                
-                
-                if str(id_medico).lower().strip() == str(id_atend).lower().strip():
-                    cont_atend += 1
-                    soma_duracao += atend.get("duracao", 0)
-                    if atend.get("especialidade_correta", False):
-                        cont_corretos += 1
+    dados_selecionados = {
+        "medicos": medicos_processados, 
+        "tempo_atual": tempo_total_min, 
+        "titulo": "Simulação Atual",
+        "historico_atendimentos": historico_atendimentos
+    }
 
-           
-            eficiencia_calc = cont_atend / horas_trabalhadas if horas_trabalhadas > 0 else 0
-            t_medio_calc = soma_duracao / cont_atend if cont_atend > 0 else 0
-            t_corresp_calc = (cont_corretos / cont_atend * 100) if cont_atend > 0 else 0
-            t_ocup_calc = (soma_duracao / tempo_total_min * 100) if tempo_total_min > 0 else 0
-
-            medicos_processados.append({
-                "id": medico.get("id", f"M{idx+1}"),
-                "nome": medico.get("nome", f"Médico {idx+1}"),
-                "especialidade": medico.get("especialidade", "Geral"),
-                "num_atendimentos": cont_atend,
-                "tempo_total_ocupado": soma_duracao,
-                "tempo_medio_consulta": t_medio_calc,
-                "taxa_correspondencia": t_corresp_calc,
-                "taxa_ocupacao": t_ocup_calc,
-                "eficiencia": eficiencia_calc
-            })
-
-        dados_selecionados = {
-            "medicos": medicos_processados, 
-            "tempo_atual": tempo_total_min, 
-            "titulo": "Simulação Atual"
-        }
-
-    if dados_selecionados:
-        mostrar_analise_completa_medicos(dados_selecionados)
+    mostrar_analise_completa_medicos(dados_selecionados)
 
 def mostrar_analise_completa_medicos(dados_simulacao):
     """Mostra análise completa dos médicos com gráficos simplificados"""
@@ -6072,7 +6136,7 @@ def mostrar_analise_completa_medicos(dados_simulacao):
             nome_arquivo = f"relatorio_desempenho_{titulo_simulacao.lower().replace(' ', '_').replace('/', '_').replace(':', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             arquivo_salvo = salvar_arquivo(relatorio_texto, nome_arquivo)
             if arquivo_salvo:
-                sg.popup(f"Relatório exportado para:\n{arquivo_salvo}", title="Sucesso")
+                sg.popup(f"Relatório exportado para:\n{arquivo_salvo}", title="Sucesso", keep_on_top=True, modal=True)
             else:
                 sg.popup_error("Falha ao salvar o relatório.", title="Erro")
     

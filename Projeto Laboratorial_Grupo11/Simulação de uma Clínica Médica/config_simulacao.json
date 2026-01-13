@@ -1,0 +1,13 @@
+{
+  "lambda_chegada": 40.0,
+  "tempo_medio_consulta": 15.0,
+  "tempo_simulacao": 480.0,
+  "num_medicos": 25,
+  "frequencia_pausa": 120.0,
+  "duracao_pausa": 15.0,
+  "num_pausas": 2,
+  "max_pausa_simultanea": 8,
+  "tempo_max_espera": 60.0,
+  "prob_desistencia": 0.3,
+  "distribuicao": "uniform"
+}

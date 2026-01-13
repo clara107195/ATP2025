@@ -532,10 +532,11 @@ def carregar_pacientes_simula():
                 "alta": "ALTA", "normal": "NORMAL", "baixa": "BAIXA"
             }
             
-            
             mapeamento_doencas = carregar_mapeamento_doencas()
             
-            for p in pessoas:
+            i = 0
+            while i < len(pessoas):
+                p = pessoas[i]
                 if isinstance(p, dict):
                     
                     prioridade_raw = str(p.get("prioridade", "NORMAL")).lower()
@@ -543,19 +544,24 @@ def carregar_pacientes_simula():
                     p["doenca"] = p.get("doenca", "Consulta de rotina")
                     p["consulta_marcada"] = p.get("consulta_marcada", False)
                     
-                    
                     doenca_lower = p["doenca"].lower()
                     especialidade = "Clínica Geral"
+                    
                     if doenca_lower in mapeamento_doencas:
                         especialidade = mapeamento_doencas[doenca_lower]
                     else:
-                        for palavra in doenca_lower.split():
-                            if palavra in mapeamento_doencas:
-                                especialidade = mapeamento_doencas[palavra]
-                                break
+                        palavras = doenca_lower.split()
+                        j = 0
+                        encontrado = False
+                        while j < len(palavras) and not encontrado:
+                            if palavras[j] in mapeamento_doencas:
+                                especialidade = mapeamento_doencas[palavras[j]]
+                                encontrado = True
+                            j = j + 1
                     
                     p["especialidade_necessaria"] = especialidade
                     pessoas_validas.append(p)
+                i = i + 1
             return pessoas_validas
     except Exception as e:
         print(f"Erro crítico nos pacientes: {e}")
@@ -582,8 +588,17 @@ def carregar_medicos_simula():
 
 
 def ordenar_fila_por_prioridade(fila, prioridades):
-    
-    return sorted(fila, key=lambda x: (prioridades.get(x["prioridade"].lower(), 3), x["tempo_chegada"]))
+    if not fila:
+        return fila
+    lista_fila = []
+    while not queue_empty(fila):
+        paciente, fila = remover_da_fila(fila)
+        lista_fila.append(paciente)
+    lista_fila.sort(key=lambda p: prioridades.get(p.get("prioridade", "NORMAL"), 3))
+    fila_ordenada = []
+    for paciente in lista_fila:
+        fila_ordenada = adicionar_a_fila(fila_ordenada, paciente)
+    return fila_ordenada
 
 
 def gera_tempo_consulta(tempo_medio, dist):
